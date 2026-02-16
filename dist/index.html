@@ -1,98 +1,78 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta charset="utf-8">
-    <title>Passport Auto-Scanner</title>
     <script src="js/mrz-worker.bundle-min-wrapped.js"></script>
     <script src="js/demo.bundle-min.js"></script>
     <style>
-        body { background: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; }
-        #status-bar { background: #333; padding: 15px; border-radius: 8px; border-left: 5px solid #00ff00; margin-bottom: 20px; font-family: monospace; }
-        #result-box { background: white; color: #222; margin: 0 auto; padding: 20px; border-radius: 12px; text-align: left; max-width: 600px; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
-        input#photo { display: none; }
+      html, body { padding: 0; margin: 0; font-family: sans-serif; background: #f4f4f4; }
+      .wrapper { display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 20px; }
+      #auto-status { background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-family: monospace; }
+      input#photo { display: none; } /* Hide the manual button */
+      #parsed, #detected { width: 100%; display: flex; flex-direction: column; align-items: center; }
+      canvas { max-width: 90%; border: 2px solid #333; margin: 10px; }
     </style>
-</head>
-<body>
-    <div id="status-bar">SYSTEM ONLINE: Waiting for image from Python...</div>
-    <input type="file" id="photo" name="photo" accept="image/jpeg"/>
-    
-    <div id="result-box">
-        <h2 style="margin-top:0; color:#007bff;">Passport Data Captured</h2>
-        <div id="json-output"></div>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div id="auto-status">SYSTEM READY: Waiting for Python Upload...</div>
+      
+      <input type="file" id="photo" name="photo" accept="image/png, image/jpeg"/>
+      
+      <div id="parsed"></div>
+      <div id="detected"></div>
     </div>
 
-    <div id="detected" style="display:none;"></div>
-    <div id="parsed" style="display:none;"></div>
-
     <script>
-        let lastImageSize = 0;
-        const photoInput = document.getElementById('photo');
-        const status = document.getElementById('status-bar');
+      let lastImageHash = "";
 
-        // Watch for changes in the folder
-        setInterval(async () => {
-            try {
-                const imgUrl = `passport_scan.jpg?t=${new Date().getTime()}`;
-                const res = await fetch(imgUrl);
-                if (!res.ok) return;
-                
-                const blob = await res.blob();
-                if (blob.size !== lastImageSize && blob.size > 0) {
-                    lastImageSize = blob.size;
-                    status.innerText = "NEW IMAGE DETECTED! Processing MRZ...";
-                    
-                    const file = new File([blob], "scan.jpg", { type: "image/jpeg" });
-                    const dt = new DataTransfer();
-                    dt.items.add(file);
-                    photoInput.files = dt.files;
-                    
-                    // Trigger the library
-                    setTimeout(() => {
-                        photoInput.dispatchEvent(new Event('change', { bubbles: true }));
-                    }, 500);
-                }
-            } catch (e) { console.log("Waiting for file..."); }
-        }, 3000);
+      async function checkForNewScan() {
+        const status = document.getElementById('auto-status');
+        const fileInput = document.getElementById('photo');
 
-        // Catch the library output and format it
-        const originalLog = console.log;
-        console.log = function(msg) {
-            originalLog.apply(console, arguments);
+        try {
+          // 1. Fetch the image from your dist folder
+          // Using t= timestamp to force the browser to see the NEWEST upload
+          const imageUrl = `passport_scan.jpg?t=${new Date().getTime()}`;
+          const response = await fetch(imageUrl);
+          
+          if (response.ok) {
+            const blob = await response.blob();
             
-            if (msg && typeof msg === 'object') {
-                const d = msg.formatted || (msg.fields ? msg.fields : null);
-                if (d) {
-                    const finalJSON = {
-                        "firstName": d.firstName || "N/A",
-                        "lastName": d.lastName || "N/A",
-                        "fullName": `${d.firstName || ''} ${d.lastName || ''}`.trim(),
-                        "dateOfBirth": formatDate(d.dob),
-                        "passportNumber": d.documentNumber || d.documentNumberCheckDigit || "N/A",
-                        "nationality": d.nationality || "N/A",
-                        "sex": d.sex || "N/A",
-                        "expiryDate": formatDate(d.expiry),
-                        "country": d.issuer || "N/A"
-                    };
-                    renderResult(finalJSON);
-                }
+            // 2. Only scan if the file size is different from the last one
+            // This prevents the scanner from running in a loop on the same photo
+            if (blob.size !== lastImageHash) {
+              lastImageHash = blob.size;
+              status.innerText = "NEW IMAGE DETECTED! Processing...";
+
+              const file = new File([blob], "passport_scan.jpg", { type: "image/jpeg" });
+              const container = new DataTransfer();
+              container.items.add(file);
+              fileInput.files = container.files;
+
+              // 3. This triggers the original demo.bundle-min.js logic immediately
+              fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+              
+              status.innerText = "SCAN COMPLETE. Waiting for next...";
             }
-        };
-
-        function formatDate(s) {
-            if (!s || s.length < 6) return s;
-            return `${s.substring(4,6)}/${s.substring(2,4)}/${s.substring(0,2)}`;
+          }
+        } catch (e) {
+          console.log("Waiting for file to appear...");
         }
+      }
 
-        function renderResult(data) {
-            document.getElementById('result-box').style.display = "block";
-            document.getElementById('json-output').innerHTML = `<pre>${JSON.stringify(data, null, 4)}</pre>`;
-            status.innerText = "✅ SCAN SUCCESSFUL";
-            status.style.borderLeftColor = "#00ff00";
-            
-            // Send to Chrome Extension
-            window.postMessage({ type: "MRZ_DATA_EXT", payload: data }, "*");
+      // Check every 3 seconds
+      setInterval(checkForNewScan, 3000);
+
+      // Listener for the Extension (shouts the data when found)
+      const originalLog = console.log;
+      console.log = function(msg) {
+        originalLog.apply(console, arguments);
+        if (msg && msg.formatted) {
+          window.postMessage({ type: "MRZ_DATA_EXT", payload: msg.formatted }, "*");
         }
+      };
     </script>
-</body>
+  </body>
 </html>
