@@ -1,78 +1,84 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<head>
     <meta charset="utf-8">
+    <title>Automated Scanner</title>
     <script src="js/mrz-worker.bundle-min-wrapped.js"></script>
     <script src="js/demo.bundle-min.js"></script>
     <style>
-      html, body { padding: 0; margin: 0; font-family: sans-serif; background: #f4f4f4; }
-      .wrapper { display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 20px; }
-      #auto-status { background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-family: monospace; }
-      input#photo { display: none; } /* Hide the manual button */
-      #parsed, #detected { width: 100%; display: flex; flex-direction: column; align-items: center; }
-      canvas { max-width: 90%; border: 2px solid #333; margin: 10px; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; text-align: center; }
+        #status { padding: 20px; font-weight: bold; color: #0f0; }
+        #result-box { background: white; color: black; margin: 20px; padding: 20px; border-radius: 10px; text-align: left; display: none; }
+        input#photo { display: none; }
     </style>
-  </head>
-  <body>
-    <div class="wrapper">
-      <div id="auto-status">SYSTEM READY: Waiting for Python Upload...</div>
-      
-      <input type="file" id="photo" name="photo" accept="image/png, image/jpeg"/>
-      
-      <div id="parsed"></div>
-      <div id="detected"></div>
-    </div>
+</head>
+<body>
+    <div id="status">SYSTEM READY: Waiting for Python image...</div>
+    <input type="file" id="photo" name="photo"/>
+    <div id="result-box"></div>
+    <div id="detected" style="display:none;"></div>
+    <div id="parsed" style="display:none;"></div>
 
     <script>
-      let lastImageHash = "";
+        let lastSize = 0;
+        const photoInput = document.getElementById('photo');
 
-      async function checkForNewScan() {
-        const status = document.getElementById('auto-status');
-        const fileInput = document.getElementById('photo');
+        // 1. Check for Python Upload every 3 seconds
+        setInterval(async () => {
+            try {
+                const imgUrl = `passport_scan.jpg?t=${new Date().getTime()}`;
+                const res = await fetch(imgUrl);
+                const blob = await res.blob();
+                
+                if (blob.size !== lastSize) {
+                    lastSize = blob.size;
+                    document.getElementById('status').innerText = "NEW SCAN DETECTED...";
+                    
+                    const file = new File([blob], "scan.jpg", { type: "image/jpeg" });
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    photoInput.files = dt.files;
+                    photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            } catch (e) {}
+        }, 3000);
 
-        try {
-          // 1. Fetch the image from your dist folder
-          // Using t= timestamp to force the browser to see the NEWEST upload
-          const imageUrl = `passport_scan.jpg?t=${new Date().getTime()}`;
-          const response = await fetch(imageUrl);
-          
-          if (response.ok) {
-            const blob = await response.blob();
-            
-            // 2. Only scan if the file size is different from the last one
-            // This prevents the scanner from running in a loop on the same photo
-            if (blob.size !== lastImageHash) {
-              lastImageHash = blob.size;
-              status.innerText = "NEW IMAGE DETECTED! Processing...";
+        // 2. Intercept and reformat the output to YOUR format
+        const originalLog = console.log;
+        console.log = function(msg) {
+            originalLog.apply(console, arguments);
+            if (msg && (msg.formatted || msg.raw)) {
+                const data = msg.formatted || {};
+                
+                // Map the data to the EXACT JSON you requested
+                const myFormat = {
+                    firstName: data.firstName || "N/A",
+                    lastName: data.lastName || "N/A",
+                    fullName: `${data.firstName || ''} ${data.lastName || ''}`.trim(),
+                    dateOfBirth: formatMyDate(data.dob),
+                    passportNumber: data.documentNumber || "N/A",
+                    nationality: data.nationality || "N/A",
+                    sex: data.sex || "N/A",
+                    expiryDate: formatMyDate(data.expiry),
+                    country: data.issuer || "N/A"
+                };
 
-              const file = new File([blob], "passport_scan.jpg", { type: "image/jpeg" });
-              const container = new DataTransfer();
-              container.items.add(file);
-              fileInput.files = container.files;
-
-              // 3. This triggers the original demo.bundle-min.js logic immediately
-              fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-              
-              status.innerText = "SCAN COMPLETE. Waiting for next...";
+                displayAndSend(myFormat);
             }
-          }
-        } catch (e) {
-          console.log("Waiting for file to appear...");
-        }
-      }
+        };
 
-      // Check every 3 seconds
-      setInterval(checkForNewScan, 3000);
-
-      // Listener for the Extension (shouts the data when found)
-      const originalLog = console.log;
-      console.log = function(msg) {
-        originalLog.apply(console, arguments);
-        if (msg && msg.formatted) {
-          window.postMessage({ type: "MRZ_DATA_EXT", payload: msg.formatted }, "*");
+        function formatMyDate(str) {
+            if (!str || str.length !== 6) return str;
+            return `${str.substring(4,6)}/${str.substring(2,4)}/${str.substring(0,2)}`;
         }
-      };
+
+        function displayAndSend(data) {
+            const box = document.getElementById('result-box');
+            box.style.display = "block";
+            box.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            window.postMessage({ type: "MRZ_DATA_EXT", payload: data }, "*");
+            document.getElementById('status').innerText = "✅ DATA CAPTURED";
+        }
     </script>
-  </body>
+</body>
 </html>
