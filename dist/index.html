@@ -1,93 +1,142 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta charset="utf-8">
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud MRZ Scanner</title>
     <script src="js/mrz-worker.bundle-min-wrapped.js"></script>
     <script src="js/demo.bundle-min.js"></script>
     <style>
-      html, body { padding: 0; margin: 0; font-family: sans-serif; background: #f4f4f4; }
-      .wrapper { display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 20px; }
-      #auto-status { background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-family: monospace; }
-      input#photo { display: none; } 
-      #parsed, #detected { width: 100%; display: flex; flex-direction: column; align-items: center; }
-      #custom-json-display { background: white; color: black; padding: 15px; border-radius: 10px; margin-top: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); width: 80%; display: none; }
-      pre { white-space: pre-wrap; word-wrap: break-word; font-size: 12px; }
-      canvas { max-width: 90%; border: 2px solid #333; margin: 10px; }
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: #1e293b;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            width: 90%;
+            max-width: 600px;
+            text-align: center;
+            border: 1px solid #334155;
+        }
+        h1 { color: #38bdf8; margin-bottom: 0.5rem; }
+        #status-bar {
+            font-size: 0.8rem;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border-radius: 0.5rem;
+            background: #0f172a;
+            color: #94a3b8;
+        }
+        .upload-area {
+            border: 2px dashed #334155;
+            padding: 2rem;
+            border-radius: 0.75rem;
+            margin: 1rem 0;
+            transition: border-color 0.3s;
+        }
+        #photo {
+            width: 100%;
+            color: #94a3b8;
+        }
+        #parsed {
+            margin-top: 1.5rem;
+            text-align: left;
+            background: #000;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            border-left: 4px solid #38bdf8;
+            display: none;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Courier New', monospace;
+            color: #4ade80;
+            margin: 0;
+        }
+        /* Style for the library's built-in progress overlay */
+        .progress.visible {
+            display: flex !important;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.9) !important;
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: #38bdf8;
+        }
     </style>
-  </head>
-  <body>
-    <div class="wrapper">
-      <div id="auto-status">SYSTEM READY: Waiting for Python Upload...</div>
-      <input type="file" id="photo" name="photo" accept="image/png, image/jpeg"/>
-      <div id="custom-json-display">
-          <h3 style="margin-top:0">Formatted Data:</h3>
-          <pre id="json-output"></pre>
-      </div>
-      <div id="parsed"></div>
-      <div id="detected"></div>
+</head>
+<body>
+
+<div class="container">
+    <h1>Passport Scanner</h1>
+    <div id="status-bar">Checking Library Status...</div>
+    
+    <div class="upload-area">
+        <input type="file" id="photo" name="photo" accept="image/png, image/jpeg"/>
     </div>
 
-    <script>
-      let lastImageHash = "";
-      let capturedDataForExtension = null; // New: holds data to repeat message
+    <div id="parsed"></div>
+</div>
 
-      async function checkForNewScan() {
-        const status = document.getElementById('auto-status');
-        const fileInput = document.getElementById('photo');
-        try {
-          const imageUrl = `passport_scan.jpg?t=${new Date().getTime()}`;
-          const response = await fetch(imageUrl);
-          if (response.ok) {
-            const blob = await response.blob();
-            if (blob.size !== lastImageHash) {
-              lastImageHash = blob.size;
-              status.innerText = "NEW IMAGE DETECTED! Processing...";
-              const file = new File([blob], "passport_scan.jpg", { type: "image/jpeg" });
-              const container = new DataTransfer();
-              container.items.add(file);
-              fileInput.files = container.files;
-              fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-              status.innerText = "SCAN COMPLETE. Waiting for next...";
+<script>
+    const photoInput = document.getElementById('photo');
+    const statusBar = document.getElementById('status-bar');
+    const resultDiv = document.getElementById('parsed');
+
+    // 1. Check if scripts are loaded
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            if (typeof mrz_worker !== 'undefined' || window.mrz_worker) {
+                statusBar.innerText = "✅ Engine Ready (Cloud)";
+                statusBar.style.color = "#4ade80";
+            } else {
+                statusBar.innerText = "❌ Engine Error: JS Files not found in /js folder";
+                statusBar.style.color = "#f87171";
             }
-          }
-        } catch (e) { console.log("Waiting for file..."); }
-      }
+        }, 1000);
+    });
 
-      setInterval(checkForNewScan, 3000);
-
-      // --- BROADCAST LOOP: Ensures extension catches the data ---
-      setInterval(() => {
-        if (capturedDataForExtension) {
-          window.postMessage({ type: "MRZ_DATA_EXT", payload: capturedDataForExtension }, "*");
+    // 2. The "Bridge" Function for Python
+    // Python will call this if the auto-upload doesn't trigger the OCR
+    window.forceStartOCR = function() {
+        if (photoInput.files.length > 0) {
+            statusBar.innerText = "🔄 Processing... (Force Triggered)";
+            const event = new Event('change', { bubbles: true });
+            photoInput.dispatchEvent(event);
         }
-      }, 2000);
+    };
 
-      const originalLog = console.log;
-      console.log = function(msg) {
-        originalLog.apply(console, arguments);
-        if (msg && (msg.formatted || msg.lastName)) {
-          const d = msg.formatted || msg; 
-          capturedDataForExtension = {
-            "firstName": d.firstName || "N/A",
-            "lastName": d.lastName || "N/A",
-            "fullName": `${d.firstName || ''} ${d.lastName || ''}`.trim(),
-            "dateOfBirth": formatDate(d.birthDate || d.dob),
-            "passportNumber": d.documentNumber || "N/A",
-            "nationality": d.nationality || "N/A",
-            "sex": d.sex || "N/A",
-            "expiryDate": formatDate(d.expirationDate || d.expiry),
-            "country": d.issuingState || d.issuer || "N/A"
-          };
-          document.getElementById('custom-json-display').style.display = 'block';
-          document.getElementById('json-output').innerText = JSON.stringify(capturedDataForExtension, null, 4);
+    // 3. Monitor for the result
+    const observer = new MutationObserver(() => {
+        if (resultDiv.innerText.trim().length > 0) {
+            resultDiv.style.display = 'block';
+            statusBar.innerText = "✅ Scan Complete";
         }
-      };
+    });
 
-      function formatDate(s) {
-        if (!s || s.length < 6) return s;
-        return `${s.substring(4,6)}/${s.substring(2,4)}/${s.substring(0,2)}`;
-      }
-    </script>
-  </body>
+    observer.observe(resultDiv, { childList: true, subtree: true });
+
+    // Handle standard change event
+    photoInput.addEventListener('change', () => {
+        statusBar.innerText = "🔄 Image Detected. Processing...";
+    });
+</script>
+
+</body>
 </html>
